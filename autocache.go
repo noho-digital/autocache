@@ -1,15 +1,11 @@
 package autocache // import "github.com/pomerium/autocache"
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"log"
-	"net/http"
-	"os"
-
-	"github.com/golang/groupcache"
 	"github.com/hashicorp/memberlist"
+	"github.com/mailgun/groupcache"
+	"net/http"
 )
 
 var _ memberlist.EventDelegate = &Autocache{}
@@ -27,11 +23,11 @@ type Options struct {
 	// Transport optionally specifies an http.RoundTripper for the client
 	// to use when it makes a request to another groupcache node.
 	// If nil, the client uses http.DefaultTransport.
-	PoolTransportFn func(context.Context) http.RoundTripper
+	PoolTransportFn func(groupcache.Context) http.RoundTripper
 	// Context optionally specifies a context for the server to use when it
 	// receives a request.
 	// If nil, the server uses the request's context
-	PoolContext func(*http.Request) context.Context
+	PoolContext func(*http.Request) groupcache.Context
 
 	// Memberlist related
 	//
@@ -40,7 +36,7 @@ type Options struct {
 	MemberlistConfig *memberlist.Config
 
 	// Logger is a custom logger which you provide.
-	Logger *log.Logger
+	Logger Logger
 }
 
 // Autocache implements automatic, distributed membership for a cluster
@@ -54,7 +50,7 @@ type Autocache struct {
 	scheme string
 	port   string
 
-	logger *log.Logger
+	logger Logger
 }
 
 // New creates a new Autocache instance, setups memberlist, and
@@ -68,26 +64,26 @@ func New(o *Options) (*Autocache, error) {
 		logger: o.Logger,
 	}
 	if ac.logger == nil {
-		ac.logger = log.New(os.Stderr, "", log.LstdFlags)
+		ac.logger = NewLogger()
 	}
-	ac.logger.Printf("autocache: with options: %+v", o)
+	ac.logger.Infof("autocache: with options: %+v", o)
 
 	if ac.scheme == "" {
-		ac.logger.Printf("autocache: pool scheme not set, assuming http://")
+		ac.logger.Infof("autocache: pool scheme not set, assuming http://")
 		ac.scheme = "http"
 	}
 	if ac.port == "0" {
-		ac.logger.Printf("autocache: pool port not set, assuming empty")
+		ac.logger.Infof("autocache: pool port not set, assuming empty")
 		ac.port = ""
 	}
 
 	mlConfig := o.MemberlistConfig
 	if mlConfig == nil {
-		ac.logger.Println("autocache: defaulting to lan configuration")
+		ac.logger.Info("autocache: defaulting to lan configuration")
 		mlConfig = memberlist.DefaultLANConfig()
 	}
 	mlConfig.Events = &ac
-	mlConfig.Logger = ac.logger
+	mlConfig.Logger = ac.logger.StdLogger()
 	if ac.Memberlist, err = memberlist.Create(mlConfig); err != nil {
 		return nil, fmt.Errorf("autocache: can't create memberlist: %w", err)
 	}
@@ -101,13 +97,13 @@ func New(o *Options) (*Autocache, error) {
 		return nil, errors.New("self addr cannot be nil")
 	}
 	ac.self = self.Addr.String()
-	ac.logger.Printf("autocache: self addr is: %s", ac.self)
+	ac.logger.Infof("autocache: self addr is: %s", ac.self)
 	poolOptions := &groupcache.HTTPPoolOptions{}
 	if o.PoolOptions != nil {
 		poolOptions = o.PoolOptions
 	}
 	gcSelf := ac.groupcacheURL(ac.self)
-	ac.logger.Printf("autocache: groupcache self: %s options: %+v", gcSelf, poolOptions)
+	ac.logger.Infof("autocache: groupcache self: %s options: %+v", gcSelf, poolOptions)
 	ac.GroupcachePool = groupcache.NewHTTPPoolOpts(gcSelf, poolOptions)
 	if o.PoolTransportFn != nil {
 		ac.GroupcachePool.Transport = o.PoolTransportFn
@@ -155,7 +151,7 @@ func (ac *Autocache) NotifyJoin(node *memberlist.Node) {
 	ac.peers = append(ac.peers, uri)
 	if ac.GroupcachePool != nil {
 		ac.GroupcachePool.Set(ac.peers...)
-		ac.logger.Printf("Autocache/NotifyJoin: %s peers: %v", uri, len(ac.peers))
+		ac.logger.Infof("Autocache/NotifyJoin: %s peers: %v", uri, len(ac.peers))
 	}
 }
 
@@ -166,14 +162,14 @@ func (ac *Autocache) NotifyLeave(node *memberlist.Node) {
 	uri := ac.groupcacheURL(node.Addr.String())
 	ac.removePeer(uri)
 	ac.GroupcachePool.Set(ac.peers...)
-	ac.logger.Printf("Autocache/NotifyLeave: %s peers: %v", uri, len(ac.peers))
+	ac.logger.Infof("Autocache/NotifyLeave: %s peers: %v", uri, len(ac.peers))
 }
 
 // NotifyUpdate is invoked when a node is detected to have
 // updated, usually involving the meta data. The Node argument
 // must not be modified. Implements memberlist EventDelegate's interface.
 func (ac *Autocache) NotifyUpdate(node *memberlist.Node) {
-	ac.logger.Printf("Autocache/NotifyUpdate: %+v", node)
+	ac.logger.Infof("Autocache/NotifyUpdate: %+v", node)
 }
 
 func (ac *Autocache) removePeer(uri string) {
