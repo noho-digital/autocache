@@ -1,10 +1,11 @@
 package autocache // import "github.com/pomerium/autocache"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/hashicorp/memberlist"
-	"github.com/mailgun/groupcache"
+	"github.com/noho-digital/groupcache/v2"
 	"net/http"
 )
 
@@ -23,11 +24,11 @@ type Options struct {
 	// Transport optionally specifies an http.RoundTripper for the client
 	// to use when it makes a request to another groupcache node.
 	// If nil, the client uses http.DefaultTransport.
-	PoolTransportFn func(groupcache.Context) http.RoundTripper
+	PoolTransportFn func(context.Context) http.RoundTripper
 	// Context optionally specifies a context for the server to use when it
 	// receives a request.
 	// If nil, the server uses the request's context
-	PoolContext func(*http.Request) groupcache.Context
+	PoolContext func(*http.Request) context.Context
 
 	// Memberlist related
 	//
@@ -102,15 +103,15 @@ func New(o *Options) (*Autocache, error) {
 	if o.PoolOptions != nil {
 		poolOptions = o.PoolOptions
 	}
+	if o.PoolTransportFn != nil {
+		poolOptions.Transport = o.PoolTransportFn
+	}
+	if o.PoolContext != nil {
+		poolOptions.Context = o.PoolContext
+	}
 	gcSelf := ac.groupcacheURL(ac.self)
 	ac.logger.Infof("autocache: groupcache self: %s options: %+v", gcSelf, poolOptions)
 	ac.GroupcachePool = groupcache.NewHTTPPoolOpts(gcSelf, poolOptions)
-	if o.PoolTransportFn != nil {
-		ac.GroupcachePool.Transport = o.PoolTransportFn
-	}
-	if o.PoolContext != nil {
-		ac.GroupcachePool.Context = o.PoolContext
-	}
 	return &ac, nil
 }
 
